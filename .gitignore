@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+backend/target/
+ai-service/__pycache__/
+ai-service/.pytest_cache/
+
+# Environment files
+.env
+backend/src/main/resources/application-dev.properties
+
+# Docker
+docker-compose.override.yml
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+ai-service-run.log
+
+# Build artifacts
+backend/*.jar
+frontend/build/
+frontend/node_modules/
