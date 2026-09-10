@@ -204,11 +204,22 @@ const CitizenDashboard = () => {
             ) : uploadedComplaints.length === 0 ? (
               <Card><Card.Body>No uploaded complaints yet. Click "Submit New Complaint" to get started.</Card.Body></Card>
             ) : (
-              uploadedComplaints.map(c => (
-                <Card key={c.id} className="mb-3">
-                  <Card.Body>
-                    <Card.Title>{c.title}</Card.Title>
-                    <Card.Text>{c.description}</Card.Text>
+uploadedComplaints.map(c => (
+                  <Card key={c.id} className="mb-3">
+                    <Card.Body>
+                      <Card.Title>{c.title}</Card.Title>
+                      {c.reportCount > 1 && (
+                        <Badge bg="primary" className="me-2 mb-2">
+                          {c.reportCount} Reports
+                        </Badge>
+                      )}
+                      {c.duplicateOfId && (
+                        <Alert variant="info" className="mb-2">
+                          <strong>Duplicate of:</strong> Complaint #{c.duplicateOfId} — "{c.duplicateOfTitle}"
+                          {c.similarityScore && <span> (similarity: {(c.similarityScore * 100).toFixed(0)}%)</span>}
+                        </Alert>
+                      )}
+                      <Card.Text>{c.description}</Card.Text>
                     <div className="mb-2">
                       <Badge bg={STATUS_COLORS[STATUS_LABELS[c.status] || c.status] || 'secondary'} className="me-2">
                         {STATUS_LABELS[c.status] || c.status}

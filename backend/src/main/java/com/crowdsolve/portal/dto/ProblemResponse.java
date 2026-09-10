@@ -27,4 +27,8 @@ public class ProblemResponse {
     private LocalDateTime createdAt;
     private List<PrototypeResponse> prototypes;
     private Boolean hasPrototypes;
+    private Long duplicateOfId;
+    private String duplicateOfTitle;
+    private Double similarityScore;
+    private Integer reportCount;
 }

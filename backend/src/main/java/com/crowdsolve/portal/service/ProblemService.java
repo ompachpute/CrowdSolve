@@ -354,6 +354,28 @@ public class ProblemService {
     public ProblemResponse toResponse(Problem problem) {
         boolean hasPrototypes = prototypeRepository.findByProblemId(problem.getId()) != null
                 && !prototypeRepository.findByProblemId(problem.getId()).isEmpty();
+
+        Long duplicateOfId = null;
+        String duplicateOfTitle = null;
+        Double similarityScore = null;
+        var dupLink = duplicateLinkRepository.findAll().stream()
+                .filter(l -> l.getProblem() != null && l.getProblem().getId().equals(problem.getId()))
+                .findFirst();
+        if (dupLink.isPresent()) {
+            var link = dupLink.get();
+            if (link.getDuplicateOfProblem() != null) {
+                duplicateOfId = link.getDuplicateOfProblem().getId();
+                duplicateOfTitle = link.getDuplicateOfProblem().getTitle();
+            }
+            similarityScore = link.getSimilarityScore();
+        }
+
+        int reportCount = 1;
+        reportCount += (int) duplicateLinkRepository.findAll().stream()
+                .filter(l -> l.getDuplicateOfProblem() != null
+                        && l.getDuplicateOfProblem().getId().equals(problem.getId()))
+                .count();
+
         return ProblemResponse.builder()
                 .id(problem.getId())
                 .reporterId(problem.getReporter() != null ? problem.getReporter().getId() : null)
@@ -371,6 +393,10 @@ public class ProblemService {
                 .fundedBy(problem.getFundedBy())
                 .createdAt(problem.getCreatedAt())
                 .hasPrototypes(hasPrototypes)
+                .duplicateOfId(duplicateOfId)
+                .duplicateOfTitle(duplicateOfTitle)
+                .similarityScore(similarityScore)
+                .reportCount(reportCount)
                 .build();
     }
 }

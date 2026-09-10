@@ -192,10 +192,13 @@ const GovernmentDashboard = () => {
                     <Card.Body>
                       <div className="d-flex justify-content-between align-items-start mb-3">
                         <div>
-                          <div className="d-flex align-items-center gap-2 mb-1">
-                            <Badge bg="secondary">#{p.id}</Badge>
-                            <h5 className="mb-0">{p.title}</h5>
-                          </div>
+<div className="d-flex align-items-center gap-2 mb-1">
+                             <Badge bg="secondary">#{p.id}</Badge>
+                             <h5 className="mb-0">{p.title}</h5>
+                             {p.reportCount > 1 && (
+                               <Badge bg="primary">{p.reportCount} Reports</Badge>
+                             )}
+                           </div>
                           <p className="text-muted mb-2">{p.description}</p>
                           <div className="d-flex gap-2 flex-wrap">
                             <Badge bg={p.status === 'SOLVED' ? 'success' : p.status === 'FUNDING_COMMITTED' ? 'info' : 'warning'}>
