@@ -5,6 +5,7 @@ ai-service/__pycache__/
 ai-service/.pytest_cache/
 
 # Environment files
+venv
 .env
 backend/src/main/resources/application-dev.properties
 
