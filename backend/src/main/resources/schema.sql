@@ -103,3 +103,18 @@ CREATE TABLE IF NOT EXISTS government_approvals (
     status VARCHAR(50) DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'APPROVED')),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Complaint embeddings for persistent duplicate detection.
+-- The AI service stores embeddings here instead of in memory so they
+-- survive container restarts and have no 50-entry cap.
+CREATE TABLE IF NOT EXISTS complaint_embeddings (
+    id BIGSERIAL PRIMARY KEY,
+    problem_id BIGINT NOT NULL REFERENCES problems(id) ON DELETE CASCADE,
+    text TEXT NOT NULL,
+    embedding JSONB NOT NULL,
+    address VARCHAR(500),
+    latitude DOUBLE PRECISION,
+    longitude DOUBLE PRECISION,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (problem_id)
+);

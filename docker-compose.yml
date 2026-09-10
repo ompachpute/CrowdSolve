@@ -52,8 +52,12 @@ services:
     environment:
       AI_HOST: 0.0.0.0
       AI_PORT: 8000
+      AI_DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-crowdsolve}
     ports:
       - "${AI_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
 
   # Frontend (React + Nginx)

@@ -1,8 +1,16 @@
 import re
 import math
 import hashlib
+import os
 from collections import Counter
 from typing import List, Dict, Optional
+
+import joblib
+
+try:
+    from sentence_transformers import SentenceTransformer
+except ImportError:
+    SentenceTransformer = None
 
 from .models import (
     StructureResponse,
@@ -10,7 +18,43 @@ from .models import (
     MatchRequest,
     MatchResponse,
     MatchCandidate,
+    SimilarComplaint,
 )
+
+try:
+    import joblib
+except ImportError:
+    joblib = None
+
+from . import db as db_module
+
+# Confidence thresholds below which we fall back to the keyword-based logic.
+CATEGORY_CONFIDENCE_THRESHOLD = 0.35
+SEVERITY_CONFIDENCE_THRESHOLD = 0.45
+
+_MODEL_DIR = os.path.join(os.path.dirname(__file__), "model_artifacts")
+_category_model = None
+_severity_model = None
+
+if joblib is not None:
+    try:
+        _category_model = joblib.load(os.path.join(_MODEL_DIR, "category_model.joblib"))
+        _severity_model = joblib.load(os.path.join(_MODEL_DIR, "severity_model.joblib"))
+    except Exception:
+        _category_model = None
+        _severity_model = None
+
+# Sentence transformer for semantic duplicate detection.
+_st_model = None
+if SentenceTransformer is not None:
+    try:
+        _st_model = SentenceTransformer("all-MiniLM-L6-v2")
+    except Exception:
+        _st_model = None
+
+# In-memory fallback (used when DB is unavailable)
+_stored_embeddings: List[Dict] = []
+_MAX_STORED = 500
 
 
 CATEGORIES = [
@@ -70,15 +114,11 @@ def _best_category(tokens: List[str]) -> str:
 
 def _best_severity(text: str) -> str:
     lowered = text.lower()
-    chosen = "LOW"
-    for level in ["LOW", "MEDIUM", "HIGH", "CRITICAL"]:
+    for level in ["CRITICAL", "HIGH", "MEDIUM", "LOW"]:
         for kw in SEVERITY_KEYWORDS[level]:
             if kw in lowered:
-                chosen = level
-                break
-        if chosen == level:
-            break
-    return chosen
+                return level
+    return "LOW"
 
 
 def _extract_tags(tokens: List[str], limit: int = 6) -> List[str]:
@@ -87,15 +127,36 @@ def _extract_tags(tokens: List[str], limit: int = 6) -> List[str]:
     return ordered[:limit]
 
 
+def _classify_category(text: str, tokens: List[str]) -> str:
+    if _category_model is not None:
+        proba = _category_model.predict_proba([text])[0]
+        confidence = max(proba)
+        if confidence >= CATEGORY_CONFIDENCE_THRESHOLD:
+            return _category_model.predict([text])[0]
+    return _best_category(tokens)
+
+
+def _classify_severity(text: str) -> str:
+    if _severity_model is not None:
+        proba = _severity_model.predict_proba([text])[0]
+        confidence = max(proba)
+        if confidence >= SEVERITY_CONFIDENCE_THRESHOLD:
+            return _severity_model.predict([text])[0]
+    return _best_severity(text)
+
+
 def structure_service(text: str) -> StructureResponse:
     tokens = _tokenize(text)
-    category = _best_category(tokens)
-    severity = _best_severity(text)
+    category = _classify_category(text, tokens)
+    severity = _classify_severity(text)
     tags = _extract_tags(tokens)
     return StructureResponse(category=category, severity=severity, tags=tags)
 
 
-def text_to_embedding(text: str, dim: int = 256) -> List[float]:
+def text_to_embedding(text: str, dim: int = 384) -> List[float]:
+    if _st_model is not None:
+        return _st_model.encode(text, normalize_embeddings=True, show_progress_bar=False).tolist()
+    # Fallback: bag-of-words hashing embedding (no semantic understanding)
     tokens = _tokenize(text)
     vec = [0.0] * dim
     for token in tokens:
@@ -123,47 +184,172 @@ def _cosine_similarity(a: List[float], b: List[float]) -> float:
     return dot / (na * nb)
 
 
-def duplicate_check_service(embedding: List[float], threshold: float = 0.85, address: Optional[str] = None, latitude: Optional[float] = None, longitude: Optional[float] = None) -> DuplicateCheckResponse:
-    best_id: Optional[int] = None
-    best_score = 0.0
-    best_entry = None
-    
-    for entry in _stored_embeddings:
-        score = _cosine_similarity(embedding, entry["embedding"])
-        if score > best_score:
-            best_score = score
-            best_id = entry["id"]
-            best_entry = entry
+def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Return the great-circle distance in metres between two lat/lon points."""
+    r = 6371000.0
+    p1 = math.radians(lat1)
+    p2 = math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlam = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlam / 2) ** 2
+    return 2 * r * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
-    if best_score > threshold and best_id is not None:
-        stored_address = best_entry.get("address")
-        stored_lat = best_entry.get("latitude")
-        stored_lng = best_entry.get("longitude")
-        
-        if address and stored_address and address.strip() and stored_address.strip():
-            if address.strip().lower() != stored_address.strip().lower():
-                best_score = best_score * 0.3
-            elif latitude is not None and stored_lat is not None and longitude is not None and stored_lng is not None:
-                lat_diff = abs(latitude - stored_lat)
-                lng_diff = abs(longitude - stored_lng)
-                if lat_diff > 0.01 or lng_diff > 0.01:
-                    best_score = best_score * 0.3
-        
-        if best_score > threshold:
-            return DuplicateCheckResponse(isDuplicate=True, duplicateOfId=best_id, similarityScore=round(best_score, 4))
 
-    new_id = (_stored_embeddings[-1]["id"] + 1) if _stored_embeddings else 1
-    _stored_embeddings.append({
-        "id": new_id,
-        "embedding": embedding,
-        "address": address,
-        "latitude": latitude,
-        "longitude": longitude,
-    })
-    if len(_stored_embeddings) > _MAX_STORED:
-        _stored_embeddings.pop(0)
+def _address_similarity(a: Optional[str], b: Optional[str]) -> float:
+    """Token-set Jaccard similarity between two address strings."""
+    if not a or not b:
+        return 0.0
+    ta = set(_tokenize(a))
+    tb = set(_tokenize(b))
+    if not ta or not tb:
+        return 0.0
+    inter = len(ta & tb)
+    union = len(ta | tb)
+    return inter / union if union else 0.0
 
-    return DuplicateCheckResponse(isDuplicate=False, duplicateOfId=None, similarityScore=None)
+
+def _get_candidates(address, latitude, longitude, embedding, problem_similarity_threshold, address_similarity_threshold, max_geographic_distance_m):
+    """Fetch stored embeddings from DB (with in-memory fallback)."""
+    session = db_module.get_session()
+    if session is not None:
+        try:
+            rows = db_module.fetch_all(session)
+        finally:
+            session.close()
+        entries = rows
+    else:
+        entries = _stored_embeddings
+
+    candidates: List[SimilarComplaint] = []
+
+    for entry in entries:
+        prob_sim = _cosine_similarity(embedding, entry["embedding"])
+        addr_sim = _address_similarity(address, entry.get("address"))
+
+        dist_m = None
+        if (latitude is not None and entry.get("latitude") is not None
+                and longitude is not None and entry.get("longitude") is not None):
+            dist_m = _haversine_m(latitude, longitude,
+                                  entry["latitude"], entry["longitude"])
+
+        addr_component = addr_sim
+        if dist_m is not None and dist_m <= max_geographic_distance_m:
+            addr_component = max(addr_component, 0.85)
+        elif dist_m is not None:
+            decay = max(0.0, 1.0 - dist_m / (max_geographic_distance_m * 5))
+            addr_component = max(addr_component, decay * 0.85)
+
+        confidence = 0.5 * prob_sim + 0.5 * addr_component
+
+        candidates.append(SimilarComplaint(
+            id=entry["id"],
+            problem_similarity=round(prob_sim, 4),
+            address_similarity=round(addr_sim, 4),
+            distance_m=round(dist_m, 1) if dist_m is not None else None,
+            confidence=round(confidence, 4),
+        ))
+
+    candidates.sort(key=lambda c: c.confidence, reverse=True)
+    return candidates
+
+
+def duplicate_check_service(
+    text: str,
+    threshold: float = 0.55,
+    address: Optional[str] = None,
+    latitude: Optional[float] = None,
+    longitude: Optional[float] = None,
+    problem_similarity_threshold: float = 0.70,
+    address_similarity_threshold: float = 0.60,
+    max_geographic_distance_m: float = 1000.0,
+) -> DuplicateCheckResponse:
+    embedding = text_to_embedding(text)
+    candidates = _get_candidates(
+        address, latitude, longitude, embedding,
+        problem_similarity_threshold, address_similarity_threshold,
+        max_geographic_distance_m,
+    )
+    top = candidates[0] if candidates else None
+
+    if top is None or top.problem_similarity < problem_similarity_threshold:
+        return DuplicateCheckResponse(
+            status="NEW_COMPLAINT",
+            isDuplicate=False,
+            problem_similarity=top.problem_similarity if top else None,
+            address_similarity=top.address_similarity if top else None,
+            distance_m=top.distance_m if top else None,
+            confidence=top.confidence if top else None,
+            similar_complaints=candidates[:5],
+        )
+
+    location_ok = False
+    if top.address_similarity >= address_similarity_threshold:
+        location_ok = True
+    elif top.distance_m is not None and top.distance_m <= max_geographic_distance_m:
+        location_ok = True
+
+    if not location_ok:
+        return DuplicateCheckResponse(
+            status="NEW_COMPLAINT",
+            isDuplicate=False,
+            problem_similarity=top.problem_similarity,
+            address_similarity=top.address_similarity,
+            distance_m=top.distance_m,
+            confidence=top.confidence,
+            similar_complaints=candidates[:5],
+        )
+
+    status = "LIKELY_DUPLICATE" if top.confidence >= 0.80 else "POSSIBLE_DUPLICATE"
+
+    return DuplicateCheckResponse(
+        status=status,
+        isDuplicate=True,
+        problem_similarity=top.problem_similarity,
+        address_similarity=top.address_similarity,
+        distance_m=top.distance_m,
+        confidence=top.confidence,
+        duplicate_of_id=top.id,
+        similar_complaints=candidates[:5],
+    )
+
+
+def store_embedding_service(problem_id, text, address=None, latitude=None, longitude=None):
+    """Store a complaint embedding in the database (or in-memory fallback)."""
+    embedding = text_to_embedding(text)
+    session = db_module.get_session()
+    if session is not None:
+        try:
+            req = db_module.StoreEmbeddingRequest(
+                problem_id=problem_id,
+                text=text,
+                embedding=embedding,
+                address=address,
+                latitude=latitude,
+                longitude=longitude,
+            )
+            db_module.store(session, req)
+            return True
+        finally:
+            session.close()
+    else:
+        existing = [e for e in _stored_embeddings if e["id"] == problem_id]
+        if existing:
+            existing[0].update({
+                "embedding": embedding, "address": address,
+                "latitude": latitude, "longitude": longitude,
+            })
+        else:
+            new_id = (_stored_embeddings[-1]["id"] + 1) if _stored_embeddings else 1
+            _stored_embeddings.append({
+                "id": new_id,
+                "embedding": embedding,
+                "address": address,
+                "latitude": latitude,
+                "longitude": longitude,
+            })
+            if len(_stored_embeddings) > _MAX_STORED:
+                _stored_embeddings.pop(0)
+        return True
 
 
 TEAMS: List[Dict] = [

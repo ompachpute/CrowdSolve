@@ -82,26 +82,39 @@ public class ProblemService {
                 saved.setSeverity((String) structResponse.get("severity"));
             }
 
-            float[] embedding = generateEmbedding(saved.getTitle() + " " + saved.getDescription());
             Map<String, Object> dupPayload = new HashMap<>();
-            dupPayload.put("embedding", embedding);
+            dupPayload.put("text", saved.getTitle() + " " + saved.getDescription());
             dupPayload.put("address", saved.getAddress());
             dupPayload.put("latitude", saved.getLatitude());
             dupPayload.put("longitude", saved.getLongitude());
             Map<String, Object> dupResponse = restTemplate.postForObject(aiUrl + "/ai/duplicate-check", dupPayload, Map.class);
             if (dupResponse != null && Boolean.TRUE.equals(dupResponse.get("isDuplicate"))) {
-                Number dupIdNum = (Number) dupResponse.get("duplicateOfId");
-                Number simNum = (Number) dupResponse.get("similarityScore");
-                if (dupIdNum != null && simNum != null && simNum.doubleValue() > 0.85) {
+                Number dupIdNum = (Number) dupResponse.get("duplicate_of_id");
+                Number confNum = (Number) dupResponse.get("confidence");
+                Double similarity = confNum != null ? confNum.doubleValue() : null;
+                if (dupIdNum != null && similarity != null && similarity > 0.55) {
                     Problem duplicateOf = problemRepository.findById(dupIdNum.longValue())
                             .orElseThrow(() -> new RuntimeException("Duplicate problem not found"));
                     DuplicateLink link = DuplicateLink.builder()
                             .problem(saved)
                             .duplicateOfProblem(duplicateOf)
-                            .similarityScore(simNum.doubleValue())
+                            .similarityScore(similarity)
                             .build();
                     duplicateLinkRepository.save(link);
                 }
+            }
+            // Persist the embedding for future duplicate checks
+            try {
+                Map<String, Object> storePayload = new HashMap<>();
+                storePayload.put("problem_id", saved.getId());
+                storePayload.put("text", saved.getTitle() + " " + saved.getDescription());
+                storePayload.put("address", saved.getAddress());
+                storePayload.put("latitude", saved.getLatitude());
+                storePayload.put("longitude", saved.getLongitude());
+                restTemplate.postForObject(aiUrl + "/ai/store-embedding", storePayload, Map.class);
+            } catch (Exception storeEx) {
+                // Storage failure is non-fatal — duplicate detection still works
+                // for the current submission; future checks just won't see this one.
             }
             problemRepository.save(saved);
         } catch (Exception e) {
@@ -128,27 +141,15 @@ public class ProblemService {
         return null;
     }
 
-    private float[] generateEmbedding(String text) {
-        String normalized = text.toLowerCase().replaceAll("[^a-z0-9\\s]", "");
-        String[] words = normalized.split("\\s+");
-        float[] embedding = new float[384];
-        int prime = 31;
-        for (int i = 0; i < words.length && i < 384; i++) {
-            int hash = 0;
-            for (char c : words[i].toCharArray()) {
-                hash = prime * hash + c;
-            }
-            embedding[i] = (float) (Math.sin(hash) * 0.5 + 0.5);
-        }
-        return embedding;
-    }
-
     public Optional<Problem> findById(Long id) {
         return problemRepository.findById(id);
     }
 
     public List<ProblemResponse> findAll() {
-        return problemRepository.findAll().stream().map(this::toResponse).collect(Collectors.toList());
+        Set<Long> duplicateIds = new HashSet<>(duplicateLinkRepository.findDuplicateProblemIds());
+        return problemRepository.findAll().stream()
+                .filter(p -> !duplicateIds.contains(p.getId()))
+                .map(this::toResponse).collect(Collectors.toList());
     }
 
     public List<ProblemResponse> findMine() {
@@ -161,7 +162,9 @@ public class ProblemService {
         Map<Long, List<Prototype>> prototypesByProblem = prototypes.stream()
                 .filter(p -> p.getProblem() != null)
                 .collect(Collectors.groupingBy(p -> p.getProblem().getId()));
+        Set<Long> duplicateIds = new HashSet<>(duplicateLinkRepository.findDuplicateProblemIds());
         return problemRepository.findAll().stream()
+                .filter(p -> !duplicateIds.contains(p.getId()))
                 .map(p -> {
                     ProblemResponse resp = toResponse(p);
                     resp.setPrototypes(prototypesByProblem.getOrDefault(p.getId(), List.of()).stream()
@@ -207,19 +210,28 @@ public class ProblemService {
     }
 
     public List<ProblemResponse> findSolved() {
-        return problemRepository.findByStatus("SOLVED").stream().map(this::toResponse).collect(Collectors.toList());
+        return problemRepository.findByStatus("SOLVED").stream()
+                .filter(p -> !isDuplicate(p.getId()))
+                .map(this::toResponse).collect(Collectors.toList());
+    }
+
+    private boolean isDuplicate(Long problemId) {
+        return duplicateLinkRepository.findDuplicateProblemIds().contains(problemId);
     }
 
     public List<ProblemResponse> findSolvedByFunder() {
         User user = currentUser();
         return problemRepository.findByFundedBy(user.getRole()).stream()
                 .filter(p -> "SOLVED".equals(p.getStatus()))
+                .filter(p -> !isDuplicate(p.getId()))
                 .map(this::toResponse)
                 .collect(Collectors.toList());
     }
 
     public List<ProblemResponse> findInProgress() {
-        return problemRepository.findByStatus("IN_PROGRESS").stream().map(this::toResponse).collect(Collectors.toList());
+        return problemRepository.findByStatus("IN_PROGRESS").stream()
+                .filter(p -> !isDuplicate(p.getId()))
+                .map(this::toResponse).collect(Collectors.toList());
     }
 
     public List<ProblemResponse> findSolvedByTeam() {
@@ -235,6 +247,7 @@ public class ProblemService {
                 .collect(Collectors.toSet());
         return problemRepository.findAll().stream()
                 .filter(p -> "SOLVED".equals(p.getStatus()) && solvedProblemIds.contains(p.getId()))
+                .filter(p -> !isDuplicate(p.getId()))
                 .map(this::toResponse)
                 .collect(Collectors.toList());
     }
@@ -321,17 +334,20 @@ public class ProblemService {
     public ProblemResponse aiDuplicateCheck(Long id) {
         Problem problem = problemRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Problem not found"));
-        float[] embedding = generateEmbedding(problem.getTitle() + " " + problem.getDescription());
-        Map<String, Object> payload = Map.of("embedding", embedding);
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("text", problem.getTitle() + " " + problem.getDescription());
+        payload.put("address", problem.getAddress());
+        payload.put("latitude", problem.getLatitude());
+        payload.put("longitude", problem.getLongitude());
         try {
             Map<String, Object> response = restTemplate.postForObject(aiUrl + "/ai/duplicate-check", payload, Map.class);
             if (response != null) {
-                Object dupObj = response.get("duplicateOfId");
-                Object simObj = response.get("similarityScore");
-                if (dupObj != null && simObj != null) {
+                Object dupObj = response.get("duplicate_of_id");
+                Object confObj = response.get("confidence");
+                if (dupObj != null && confObj != null) {
                     Long duplicateOfId = ((Number) dupObj).longValue();
-                    Double similarityScore = ((Number) simObj).doubleValue();
-                    if (similarityScore > 0.85) {
+                    Double similarityScore = ((Number) confObj).doubleValue();
+                    if (similarityScore > 0.55) {
                         Problem duplicateOf = problemRepository.findById(duplicateOfId)
                                 .orElseThrow(() -> new RuntimeException("Duplicate problem not found"));
                         problem.setStatus("DUPLICATE_REJECTED");

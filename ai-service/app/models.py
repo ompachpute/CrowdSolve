@@ -14,17 +14,32 @@ class StructureResponse(BaseModel):
 
 
 class DuplicateCheckRequest(BaseModel):
-    embedding: List[float]
-    threshold: float = 0.85
+    text: str
     address: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
+    problem_similarity_threshold: float = 0.70
+    address_similarity_threshold: float = 0.60
+    max_geographic_distance_m: float = 1000.0
+
+
+class SimilarComplaint(BaseModel):
+    id: int
+    problem_similarity: float
+    address_similarity: float
+    distance_m: Optional[float] = None
+    confidence: float
 
 
 class DuplicateCheckResponse(BaseModel):
+    status: str  # "LIKELY_DUPLICATE", "POSSIBLE_DUPLICATE", "NEW_COMPLAINT"
     isDuplicate: bool
-    duplicateOfId: Optional[int] = None
-    similarityScore: Optional[float] = None
+    problem_similarity: Optional[float] = None
+    address_similarity: Optional[float] = None
+    distance_m: Optional[float] = None
+    confidence: Optional[float] = None
+    duplicate_of_id: Optional[int] = None
+    similar_complaints: List[SimilarComplaint] = []
 
 
 class MatchCandidate(BaseModel):
