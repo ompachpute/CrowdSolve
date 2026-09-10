@@ -113,37 +113,7 @@ public class ProblemService {
 
     @SuppressWarnings("unchecked")
     private void enrichAddressFromCoordinates(Problem problem) {
-        if (problem.getAddress() != null && !problem.getAddress().isBlank()) {
-            return;
-        }
-        if (problem.getLatitude() == null || problem.getLongitude() == null) {
-            return;
-        }
-        try {
-            String url = String.format(
-                    "https://nominatim.openstreetmap.org/reverse?format=json&lat=%s&lon=%s&zoom=10&addressdetails=1",
-                    problem.getLatitude(), problem.getLongitude());
-            HttpHeaders headers = new HttpHeaders();
-            headers.set("User-Agent", "CrowdSolve-Portal/1.0");
-            headers.set("Accept", "application/json");
-            ResponseEntity<Map> response = restTemplate.exchange(
-                    url, HttpMethod.GET, new HttpEntity<>(headers), Map.class);
-            Map<String, Object> body = response.getBody();
-            if (body == null || !(body.get("address") instanceof Map)) {
-                return;
-            }
-            Map<String, Object> parts = (Map<String, Object>) body.get("address");
-            String district = firstNonBlank(parts.get("state_district"), parts.get("county"),
-                    parts.get("city"), parts.get("town"), parts.get("village"), parts.get("municipality"));
-            String state = firstNonBlank(parts.get("state"));
-            if (district != null && state != null && !district.equalsIgnoreCase(state)) {
-                problem.setAddress(district + ", " + state);
-            } else if (state != null) {
-                problem.setAddress(state);
-            }
-        } catch (Exception e) {
-            // Reverse geocoding is best-effort; keep whatever address the reporter provided.
-        }
+        // Reverse geocoding is intentionally disabled — no external map API calls.
     }
 
     private String firstNonBlank(Object... values) {

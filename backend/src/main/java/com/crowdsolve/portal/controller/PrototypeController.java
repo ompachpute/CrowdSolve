@@ -39,11 +39,6 @@ public class PrototypeController {
         return ResponseEntity.ok(prototypeService.create(request));
     }
 
-    @GetMapping
-    public ResponseEntity<List<PrototypeResponse>> getAll() {
-        return ResponseEntity.ok(prototypeService.findAll());
-    }
-
     @GetMapping("/team")
     public ResponseEntity<List<PrototypeResponse>> getMine() {
         return ResponseEntity.ok(prototypeService.findMine());

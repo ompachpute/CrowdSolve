@@ -24,7 +24,7 @@ public class ProblemController {
         return ResponseEntity.ok(problemService.create(request));
     }
 
-    @GetMapping
+@GetMapping
     public ResponseEntity<List<ProblemResponse>> getAll() {
         return ResponseEntity.ok(problemService.findAll());
     }
@@ -39,11 +39,6 @@ public class ProblemController {
         return ResponseEntity.ok(problemService.findWithPrototypes());
     }
 
-    @GetMapping("/solved")
-    public ResponseEntity<List<ProblemResponse>> getSolved() {
-        return ResponseEntity.ok(problemService.findSolved());
-    }
-
     @GetMapping("/solved/me")
     public ResponseEntity<List<ProblemResponse>> getSolvedByMe() {
         return ResponseEntity.ok(problemService.findSolvedByFunder());
@@ -52,11 +47,6 @@ public class ProblemController {
     @GetMapping("/solved/team")
     public ResponseEntity<List<ProblemResponse>> getSolvedByTeam() {
         return ResponseEntity.ok(problemService.findSolvedByTeam());
-    }
-
-    @GetMapping("/in-progress")
-    public ResponseEntity<List<ProblemResponse>> getInProgress() {
-        return ResponseEntity.ok(problemService.findInProgress());
     }
 
     @PostMapping("/{id}/mark-solved")
@@ -70,19 +60,5 @@ public class ProblemController {
     public ResponseEntity<MessageResponse> deleteProblem(@PathVariable Long id) {
         problemService.deleteProblem(id);
         return ResponseEntity.ok(MessageResponse.of("Problem deleted successfully"));
-    }
-
-    @GetMapping("/flagged")
-    @PreAuthorize("hasRole('GOVERNMENT')")
-    public ResponseEntity<List<ProblemResponse>> getFlagged() {
-        return ResponseEntity.ok(problemService.findAll().stream()
-                .filter(p -> "DUPLICATE_REJECTED".equals(p.getStatus()) || "SUBMITTED".equals(p.getStatus()))
-                .toList());
-    }
-
-    @PostMapping("/{id}/sponsor")
-    @PreAuthorize("hasRole('INDUSTRY_NGO') or hasRole('GOVERNMENT')")
-    public ResponseEntity<ProblemResponse> sponsor(@PathVariable Long id) {
-        return ResponseEntity.ok(problemService.sponsor(id));
     }
 }

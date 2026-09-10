@@ -1,12 +1,11 @@
 package com.crowdsolve.portal.controller;
+
 import com.crowdsolve.portal.dto.MatchRequestRequest;
 import com.crowdsolve.portal.dto.MatchRequestResponse;
-import com.crowdsolve.portal.entity.User;
 import com.crowdsolve.portal.service.MatchRequestService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -24,12 +23,12 @@ public class MatchRequestController {
     }
 
     @GetMapping("/team")
-    public ResponseEntity<List<MatchRequestResponse>> getTeamRequests(@AuthenticationPrincipal User currentUser) {
+    public ResponseEntity<List<MatchRequestResponse>> getTeamRequests() {
         return ResponseEntity.ok(matchRequestService.findTeamRequests());
     }
 
     @GetMapping("/industry")
-    public ResponseEntity<List<MatchRequestResponse>> getIndustryRequests(@AuthenticationPrincipal User currentUser) {
+    public ResponseEntity<List<MatchRequestResponse>> getIndustryRequests() {
         return ResponseEntity.ok(matchRequestService.findIndustryRequests());
     }
 
