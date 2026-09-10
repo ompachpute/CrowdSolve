@@ -1,6 +1,7 @@
 import re
 import math
 import hashlib
+import os
 from collections import Counter
 from typing import List, Dict, Optional
 
@@ -11,6 +12,34 @@ from .models import (
     MatchResponse,
     MatchCandidate,
 )
+
+try:
+    import joblib
+except ImportError:
+    joblib = None
+
+# Confidence thresholds below which we fall back to the keyword-based logic.
+# Chosen from manual testing on hand-written (non-template) complaints: the
+# ML models are confident on inputs resembling training phrasing, and
+# correctly uncertain (low confidence) on genuinely novel phrasing, so a
+# low-confidence prediction should defer to the deterministic keyword rules
+# rather than guess.
+CATEGORY_CONFIDENCE_THRESHOLD = 0.35
+SEVERITY_CONFIDENCE_THRESHOLD = 0.45
+
+_MODEL_DIR = os.path.join(os.path.dirname(__file__), "model_artifacts")
+_category_model = None
+_severity_model = None
+
+if joblib is not None:
+    try:
+        _category_model = joblib.load(os.path.join(_MODEL_DIR, "category_model.joblib"))
+        _severity_model = joblib.load(os.path.join(_MODEL_DIR, "severity_model.joblib"))
+    except Exception:
+        # Model files missing or failed to load -> service still works,
+        # just always uses the keyword-based logic below.
+        _category_model = None
+        _severity_model = None
 
 
 CATEGORIES = [
@@ -70,15 +99,11 @@ def _best_category(tokens: List[str]) -> str:
 
 def _best_severity(text: str) -> str:
     lowered = text.lower()
-    chosen = "LOW"
-    for level in ["LOW", "MEDIUM", "HIGH", "CRITICAL"]:
+    for level in ["CRITICAL", "HIGH", "MEDIUM", "LOW"]:
         for kw in SEVERITY_KEYWORDS[level]:
             if kw in lowered:
-                chosen = level
-                break
-        if chosen == level:
-            break
-    return chosen
+                return level
+    return "LOW"
 
 
 def _extract_tags(tokens: List[str], limit: int = 6) -> List[str]:
@@ -87,10 +112,28 @@ def _extract_tags(tokens: List[str], limit: int = 6) -> List[str]:
     return ordered[:limit]
 
 
+def _classify_category(text: str, tokens: List[str]) -> str:
+    if _category_model is not None:
+        proba = _category_model.predict_proba([text])[0]
+        confidence = max(proba)
+        if confidence >= CATEGORY_CONFIDENCE_THRESHOLD:
+            return _category_model.predict([text])[0]
+    return _best_category(tokens)
+
+
+def _classify_severity(text: str) -> str:
+    if _severity_model is not None:
+        proba = _severity_model.predict_proba([text])[0]
+        confidence = max(proba)
+        if confidence >= SEVERITY_CONFIDENCE_THRESHOLD:
+            return _severity_model.predict([text])[0]
+    return _best_severity(text)
+
+
 def structure_service(text: str) -> StructureResponse:
     tokens = _tokenize(text)
-    category = _best_category(tokens)
-    severity = _best_severity(text)
+    category = _classify_category(text, tokens)
+    severity = _classify_severity(text)
     tags = _extract_tags(tokens)
     return StructureResponse(category=category, severity=severity, tags=tags)
 
