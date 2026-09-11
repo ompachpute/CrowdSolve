@@ -61,3 +61,16 @@ class MatchRequest(BaseModel):
 
 class MatchResponse(BaseModel):
     candidates: List[MatchCandidate]
+
+
+class StoreEmbeddingRequest(BaseModel):
+    problem_id: int
+    text: str
+    address: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+
+
+class StoreEmbeddingResponse(BaseModel):
+    stored: bool
+    problem_id: int

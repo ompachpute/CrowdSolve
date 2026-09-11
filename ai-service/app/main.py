@@ -2,8 +2,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .routes import router
+from . import db as db_module
+import os
 
-app = FastAPI(title="CrowdSolve AI Service", version="1.0.0")
+app = FastAPI(title="CrowdSolve AI Service", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -12,6 +14,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Connect to PostgreSQL for persistent embedding storage.
+# Falls back to in-memory if the DB is unreachable.
+_db_url = os.environ.get("AI_DATABASE_URL")
+if _db_url:
+    try:
+        db_module.init_db(_db_url)
+    except Exception:
+        pass
 
 app.include_router(router)
 
